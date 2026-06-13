@@ -289,6 +289,7 @@ class BridgeParametersDTO:
     # --- Material Grades ---
     steel_grade: str
     concrete_grade: str
+    overall_width: float
 
     # --- Girder ---
     span_length_L: float

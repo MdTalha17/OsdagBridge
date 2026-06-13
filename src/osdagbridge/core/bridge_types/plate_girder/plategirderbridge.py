@@ -2180,6 +2180,7 @@ class PlateGirderBridge:
             # --- Material Grades ---
             steel_grade=steel_grade,
             concrete_grade=concrete_grade,
+            overall_width=float(self.output_dict.get(KEY_TS_OVERALL_WIDTH, 0.0)) * 1e3,
             
             # --- Girder ---
             span_length_L=span_mm,

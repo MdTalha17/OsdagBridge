@@ -8,7 +8,20 @@ import ifcopenshell
 import sqlite3
 from pathlib import Path
 
-_DB_PATH = Path(__file__).resolve().parents[1] / "data" / "ResourceFiles" / "Intg_osdag.sqlite"
+def _locate_db() -> Path:
+    # 1. Try parent directory package data path
+    db_path = Path(__file__).resolve().parents[1] / "data" / "ResourceFiles" / "Intg_osdag.sqlite"
+    if db_path.exists():
+        return db_path
+    # 2. Try traversing parents
+    current = Path(__file__).resolve()
+    for parent in current.parents:
+        candidate = parent / "core" / "data" / "ResourceFiles" / "Intg_osdag.sqlite"
+        if candidate.exists():
+            return candidate
+    return db_path
+
+_DB_PATH = _locate_db()
 
 def create_ifc_guid():
     return ifcopenshell.guid.compress(uuid.uuid4().hex)
@@ -19,6 +32,7 @@ class BridgeMetadataMapper:
         self.mapper = mapper
         self._steel_cache = {}
         self._concrete_cache = {}
+        self._owner_history = None
 
     def _to_meters(self, value):
         """Safely converts mm to meters, handling None values."""
@@ -34,6 +48,7 @@ class BridgeMetadataMapper:
         if not grade or not _DB_PATH.exists():
             return {}
             
+        grade = str(grade).strip().upper()
         cache = self._steel_cache if is_steel else self._concrete_cache
         if grade in cache:
             return cache[grade]
@@ -42,7 +57,7 @@ class BridgeMetadataMapper:
         props = {}
         
         try:
-            con = sqlite3.connect(_DB_PATH)
+            con = sqlite3.connect(str(_DB_PATH))
             con.row_factory = sqlite3.Row
             cur = con.cursor()
             cur.execute(f'SELECT * FROM {table} WHERE "Grade" = ?', (grade,))
@@ -69,7 +84,7 @@ class BridgeMetadataMapper:
 
     def assign_metadata(self, element, properties, property_set_name="Pset_OsdagBridgeProperties"):
         ifc_props = []
-        owner_history = getattr(self.mapper, '_owner_history', None)
+        owner_history = getattr(self, '_owner_history', None)
         
         for key, value in properties.items():
             if value is None:
@@ -142,13 +157,17 @@ class BridgeMetadataMapper:
             
         self.assign_metadata(element, props)
 
-    def map_deck_slab(self, element, cad):
+    def map_deck_slab(self, element, cad, overall_width=None):
         if not cad: return
         concrete_grade = getattr(cad, "concrete_grade", "M30")
+        
+        # Determine width parameter
+        width_val = overall_width if overall_width is not None else getattr(cad, "carriageway_width", 0)
+        
         props = {
             "ComponentRole": "Deck Slab",
             "DeckThickness": self._to_meters(getattr(cad, "deck_thickness", 0)),
-            "CarriagewayWidth": self._to_meters(getattr(cad, "carriageway_width", 0)),
+            "OverallDeckWidth": self._to_meters(width_val),
             "SpanLength": self._to_meters(getattr(cad, "span_length_L", 0)),
             "SkewAngle": getattr(cad, "skew_angle", 0),
             "Material": concrete_grade
@@ -194,12 +213,12 @@ class BridgeMetadataMapper:
         if not cad: return
         
         props = {}
-        is_end_diaphragm = "EndDiaphragm" in item.ifc_name
+        is_end_diaphragm = "End Diaphragm" in item.ifc_name
 
         sys_name = "End Diaphragm" if is_end_diaphragm else "Intermediate Bracing"
         prefix = "end_diaphragm_" if is_end_diaphragm else ""
 
-        if "TopChord" in item.ifc_name:
+        if "Top Chord" in item.ifc_name:
             c_prefix = prefix + "top_chord" if is_end_diaphragm else "top_chord"
             props = {
                 "ComponentRole": f"{sys_name} Top Chord",
@@ -207,7 +226,7 @@ class BridgeMetadataMapper:
                 "ProfileThickness": self._to_meters(getattr(cad, f"{c_prefix}_thickness", None)),
                 "StructuralSystem": sys_name
             }
-        elif "BottomChord" in item.ifc_name:
+        elif "Bottom Chord" in item.ifc_name:
             c_prefix = prefix + "bottom_chord" if is_end_diaphragm else "bottom_chord"
             props = {
                 "ComponentRole": f"{sys_name} Bottom Chord",
@@ -253,27 +272,51 @@ class BridgeMetadataMapper:
     def map_barrier(self, element, cad, ifc_name):
         if not cad: return
         props = {}
-        if "CrashBarrier" in ifc_name:
+        is_concrete = False
+        is_steel = False
+
+        if "Crash Barrier" in ifc_name:
             props = {
                 "ComponentRole": "Crash Barrier",
                 "Standard": cad.barrier_type,
                 "SubType": cad.crash_barrier_subtype
             }
+            if cad.barrier_type == "Rigid":
+                is_concrete = True
+            else:
+                is_steel = True
         elif "Median" in ifc_name:
             props = {
                 "ComponentRole": "Median",
                 "Standard": cad.median_type,
             }
+            if "Metallic" in cad.median_type:
+                is_steel = True
+            else:
+                is_concrete = True
         elif "Railing" in ifc_name:
             props = {
                 "ComponentRole": "Railing",
                 "Standard": cad.railing_type,
             }
-            if cad.railing_type.lower() == "steel":
+            if "steel" in cad.railing_type.lower():
                 props["RailCount"] = getattr(cad, "rail_count", 0)
                 props["PostSpacing"] = 2.0
+                is_steel = True
             else:
                 props["RailingStyle"] = "Continuous"
+                is_concrete = True
+                
+        if is_concrete:
+            concrete_grade = getattr(cad, "concrete_grade", "M30")
+            props["Material"] = concrete_grade
+            db_props = self._lookup_material_properties(concrete_grade, is_steel=False)
+            props.update(db_props)
+        elif is_steel:
+            steel_grade = getattr(cad, "steel_grade", "E 250A")
+            props["Material"] = steel_grade
+            db_props = self._lookup_material_properties(steel_grade, is_steel=True)
+            props.update(db_props)
             
         if props:
             self.assign_metadata(element, props)

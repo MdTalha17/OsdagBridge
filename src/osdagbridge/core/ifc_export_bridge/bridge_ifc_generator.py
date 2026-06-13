@@ -159,7 +159,7 @@ class BridgeIfcGenerator:
                 ObjectPlacement=self.file.createIfcLocalPlacement(self.storey.ObjectPlacement, place), 
                 Representation=prod_def)
             self.bind_element_to_storey(elem)
-            self.metadata.map_deck_slab(elem, cad_context)
+            self.metadata.map_deck_slab(elem, cad_context, overall_width=getattr(item, 'overall_width', None))
             
         def _process_metallic_median(item, geo):
               """Generates the multi-component assembly for metallic medians."""

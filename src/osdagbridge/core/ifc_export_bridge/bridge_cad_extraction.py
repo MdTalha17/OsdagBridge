@@ -110,8 +110,8 @@ class PlateGirderIFCExtractor:
     def extract(self):
         design_dict, actual_base_width, actual_railing_width = self._build_design_dict()
         
-        # Step 1: Calculate dynamic deck width
-        total_width = self._calculate_total_deck_width(actual_base_width, actual_railing_width)
+        # Step 1: Use the exact overall deck width from inputs DTO
+        total_width = self.cad.overall_width
         
         # Step 2: Solve for structural girder layout
         n_girders, spacing, overhang = self._solve_girder_layout(total_width)
@@ -290,20 +290,21 @@ class PlateGirderIFCExtractor:
             
             # Sub-function for type dispatch
             def build_bracing(b_type, d_sec, d_dims, d_t, t_sec, t_dims, t_t, b_sec, b_dims, b_t, bracket_opt, k_top_opt):
+                prefix = "End Diaphragm " if is_end else ""
                 if b_type == "X":
-                    add_member([x_l, yL, z_top], [x_r, yR, z_bot], d_t, d_sec, d_dims, +1, "Diagonal Brace")
-                    add_member([x_l, yL, z_bot], [x_r, yR, z_top], d_t, d_sec, d_dims, -1, "Diagonal Brace")
+                    add_member([x_l, yL, z_top], [x_r, yR, z_bot], d_t, d_sec, d_dims, +1, prefix + "Diagonal Brace")
+                    add_member([x_l, yL, z_bot], [x_r, yR, z_top], d_t, d_sec, d_dims, -1, prefix + "Diagonal Brace")
                     if bracket_opt in ("LOWER", "BOTH"):
-                        add_member([x_l, yL, z_bot], [x_r, yR, z_bot], b_t, b_sec, b_dims, +1, "Bottom Chord")
+                        add_member([x_l, yL, z_bot], [x_r, yR, z_bot], b_t, b_sec, b_dims, +1, prefix + "Bottom Chord")
                     if bracket_opt in ("UPPER", "BOTH"):
-                        add_member([x_l, yL, z_top], [x_r, yR, z_top], t_t, t_sec, t_dims, +1, "Top Chord")
+                        add_member([x_l, yL, z_top], [x_r, yR, z_top], t_t, t_sec, t_dims, +1, prefix + "Top Chord")
                         
                 elif b_type == "K":
-                    add_member([x_l, yL, z_top], [x_m, ym, z_bot], d_t, d_sec, d_dims, +1, "Diagonal Brace")
-                    add_member([x_r, yR, z_top], [x_m, ym, z_bot], d_t, d_sec, d_dims, -1, "Diagonal Brace")
-                    add_member([x_l, yL, z_bot], [x_r, yR, z_bot], b_t, b_sec, b_dims, +1, "Bottom Chord")
+                    add_member([x_l, yL, z_top], [x_m, ym, z_bot], d_t, d_sec, d_dims, +1, prefix + "Diagonal Brace")
+                    add_member([x_r, yR, z_top], [x_m, ym, z_bot], d_t, d_sec, d_dims, -1, prefix + "Diagonal Brace")
+                    add_member([x_l, yL, z_bot], [x_r, yR, z_bot], b_t, b_sec, b_dims, +1, prefix + "Bottom Chord")
                     if k_top_opt:
-                        add_member([x_l, yL, z_top], [x_r, yR, z_top], t_t, t_sec, t_dims, +1, "Top Chord")
+                        add_member([x_l, yL, z_top], [x_r, yR, z_top], t_t, t_sec, t_dims, +1, prefix + "Top Chord")
 
             if is_end:
                 base_offset = self.cad.end_diaphragm_spacing if self.cad.end_diaphragm_spacing > 0 else 200.0
@@ -376,14 +377,12 @@ class PlateGirderIFCExtractor:
             [self._calculate_skew_offset(y_max), y_max, z_top]
         ]
         
-        return [ExtractedObject("SlabPolygon", points=pts, thickness=T, ifc_name="Deck Slab")]
+        return [ExtractedObject("SlabPolygon", points=pts, thickness=T, ifc_name="Deck Slab", overall_width=total_width)]
 
-    def _extract_safety_components(self, design_dict, actual_base_width, actual_railing_width):
+    def _extract_safety_components(self, total_deck_width, actual_base_width, actual_railing_width):
         components = []
         L = self.cad.span_length_L
         z_base = self.cad.girder_section_d / 2 + self.cad.girder_section_tf + self.cad.deck_thickness
-        
-        total_deck_width = self._calculate_total_deck_width(actual_base_width, actual_railing_width)
         
         # Calculate road assembly offset (same as calculate_carriageway_offset in Osdag)
         carriageway_offset = 0.0
