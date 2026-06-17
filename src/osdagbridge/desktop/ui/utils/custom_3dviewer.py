@@ -352,7 +352,7 @@ class CustomViewer3d(qtViewer3d):
         if hasattr(self, "_axis_triad") and self._axis_triad:
             at = self._axis_triad
             if getattr(at, "_started", False):
-                at.show()
+                at.start()
                 at.raise_()
 
     def hideEvent(self, event):
@@ -852,15 +852,26 @@ class CustomViewer3d(qtViewer3d):
         if self._navcube_sync is None:
             self._navcube_sync = OCCNavCubeSync(self.view, self.navcube)
         self._position_navcube()
-        self.navcube.show()
-        self.navcube.raise_()
-        QTimer.singleShot(150, self._show_navcube_when_ready)
 
-        # Show axis triad (pure Qt — no OCC init needed)
-        if hasattr(self, "_axis_triad") and self._axis_triad:
-            self._position_axis_triad()
-            self._axis_triad._started = True   # flag so showEvent can re-show it
-            self._axis_triad.start()
+        # Only show the NavCube overlay and start the axis triad if the viewer itself is visible.
+        # This prevents them from appearing as stray floating widgets during startup on Linux
+        # when the CAD3DWindow is initialized but kept hidden.
+        if self.isVisible():
+            self.navcube.show()
+            self.navcube.raise_()
+            QTimer.singleShot(150, self._show_navcube_when_ready)
+
+            # Show axis triad (pure Qt — no OCC init needed)
+            if hasattr(self, "_axis_triad") and self._axis_triad:
+                self._position_axis_triad()
+                self._axis_triad._started = True   # flag so showEvent can re-show it
+                self._axis_triad.start()
+        else:
+            # If not visible yet, still mark the navcube ready for later and flag the triad to start
+            if hasattr(self.navcube, "mark_ready"):
+                self.navcube.mark_ready()
+            if hasattr(self, "_axis_triad") and self._axis_triad:
+                self._axis_triad._started = True
 
     def _show_navcube_when_ready(self):
         self._resize_navcube()
